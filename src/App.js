@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Confetti from "react-confetti";
+import app from "./firebase/firebaseConfig";
+import { getDatabase, ref, push, onValue } from "firebase/database";
 
 // 5 preguntas bioquímicas
 const preguntas = [
@@ -44,6 +46,30 @@ function App() {
   const [amigoPensando, setAmigoPensando] = useState(false);
   const [puntaje, setPuntaje] = useState(0);
   const [juegoTerminado, setJuegoTerminado] = useState(false);
+  const [ranking, setRanking] = useState([]);
+
+  // Escucha cambios en la lista de puntajes (ranking)
+  useEffect(() => {
+    const db = getDatabase(app);
+    const rankingRef = ref(db, "rankingMillonario");
+    const unsubscribe = onValue(rankingRef, (snapshot) => {
+      const data = snapshot.val() || {};
+      const rankingArray = Object.values(data).sort((a, b) => b.puntaje - a.puntaje);
+      setRanking(rankingArray);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Al terminar el juego, guarda el puntaje
+  useEffect(() => {
+    if (juegoTerminado && nombre.trim() !== "") {
+      const db = getDatabase(app);
+      push(ref(db, "rankingMillonario"), {
+        nombre,
+        puntaje
+      });
+    }
+  }, [juegoTerminado, nombre, puntaje]);
 
   const playSound = (tipo) => {
     const audio = new window.Audio(
@@ -152,9 +178,25 @@ function App() {
         <div className="bg-white rounded-2xl shadow-2xl p-10 w-full max-w-lg flex flex-col items-center">
           <h1 className="text-4xl font-extrabold text-green-700 mb-4">¡Juego terminado!</h1>
           <p className="text-xl mb-2">Jugador: <span className="font-bold">{nombre}</span></p>
-          <p className="text-2xl font-bold mb-8">Puntaje: <span className="text-green-700">{puntaje} / {preguntas.length}</span></p>
+          <p className="text-2xl font-bold mb-4">Puntaje: <span className="text-green-700">{puntaje} / {preguntas.length}</span></p>
+
+          {/* Ranking en tiempo real */}
+          {ranking.length > 0 && (
+            <div className="mt-6 w-full">
+              <h3 className="text-lg font-bold mb-2 text-center text-blue-700">Ranking en tiempo real</h3>
+              <div className="bg-blue-50 rounded-lg px-4 py-2 max-h-56 overflow-y-auto shadow-inner">
+                {ranking.map((jugador, idx) => (
+                  <div key={idx} className="flex justify-between py-1 border-b last:border-b-0">
+                    <span className="font-semibold">{jugador.nombre}</span>
+                    <span className="font-mono text-blue-800">{jugador.puntaje}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <button
-            className="mt-4 px-8 py-3 bg-blue-600 text-white font-bold rounded-lg shadow hover:bg-blue-700 transition"
+            className="mt-8 px-8 py-3 bg-blue-600 text-white font-bold rounded-lg shadow hover:bg-blue-700 transition"
             onClick={() => {
               setJuegoIniciado(false);
               setIndicePregunta(0);
@@ -216,7 +258,7 @@ function App() {
       <div className="bg-white rounded-2xl shadow-2xl p-10 w-full max-w-xl flex flex-col items-center">
         <h2 className="text-2xl font-bold text-yellow-700 mb-2">{`Pregunta ${indicePregunta + 1}`}</h2>
         <p className="mb-6 text-gray-800 text-center">{preguntaActual.enunciado}</p>
-        
+
         {/* Botones de comodines */}
         <div className="flex w-full justify-end mb-4 space-x-3">
           <button
@@ -244,14 +286,13 @@ function App() {
               <button
                 key={idx}
                 className={`py-3 px-6 rounded-lg border font-semibold transition
-                  ${
-                    respuestaSeleccionada === idx
-                      ? respuestaVerificada
-                        ? (idx === preguntaActual.respuestaCorrecta
-                            ? "bg-green-400 text-white border-green-600"
-                            : "bg-red-400 text-white border-red-600")
-                        : "bg-blue-100 border-blue-400"
-                      : "bg-white border-gray-300 hover:bg-blue-50"
+                  ${respuestaSeleccionada === idx
+                    ? respuestaVerificada
+                      ? (idx === preguntaActual.respuestaCorrecta
+                        ? "bg-green-400 text-white border-green-600"
+                        : "bg-red-400 text-white border-red-600")
+                      : "bg-blue-100 border-blue-400"
+                    : "bg-white border-gray-300 hover:bg-blue-50"
                   }
                 `}
                 disabled={respuestaVerificada}

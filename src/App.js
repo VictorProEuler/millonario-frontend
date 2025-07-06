@@ -3,7 +3,7 @@ import Confetti from "react-confetti";
 import app from "./firebase/firebaseConfig";
 import { getDatabase, ref, push, onValue } from "firebase/database";
 
-// 5 preguntas bioquímicas
+// 5 preguntas bioquímicas (puedes cambiarlas luego)
 const preguntas = [
   {
     enunciado: "¿Cuál de las siguientes moléculas es considerada el principal transportador de energía en la célula?",
@@ -47,8 +47,10 @@ function App() {
   const [puntaje, setPuntaje] = useState(0);
   const [juegoTerminado, setJuegoTerminado] = useState(false);
   const [ranking, setRanking] = useState([]);
+  const [tiempoRestante, setTiempoRestante] = useState(15);
+  const [timerAudio, setTimerAudio] = useState(null);
 
-  // Escucha cambios en la lista de puntajes (ranking)
+  // Ranking en tiempo real
   useEffect(() => {
     const db = getDatabase(app);
     const rankingRef = ref(db, "rankingMillonario");
@@ -60,7 +62,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // Al terminar el juego, guarda el puntaje
+  // Guarda puntaje al terminar
   useEffect(() => {
     if (juegoTerminado && nombre.trim() !== "") {
       const db = getDatabase(app);
@@ -70,6 +72,81 @@ function App() {
       });
     }
   }, [juegoTerminado, nombre, puntaje]);
+
+  // Reproducir sonidos y manejar timer
+  useEffect(() => {
+    if (juegoIniciado && !respuestaVerificada) {
+      setTiempoRestante(15);
+
+      // Sonido de transición
+      const transicionAudio = new window.Audio("/sonidos/transicion.mp3");
+      transicionAudio.volume = 0.4;
+      transicionAudio.play();
+
+      // Sonido timer en loop
+      const tAudio = new window.Audio("/sonidos/timer.mp3");
+      tAudio.loop = true;
+      tAudio.volume = 0.45;
+      tAudio.play();
+      setTimerAudio(tAudio);
+
+      // Cronómetro
+      const interval = setInterval(() => {
+        setTiempoRestante(prev => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      // Limpia al desmontar/cambiar pregunta
+      return () => {
+        clearInterval(interval);
+        tAudio.pause();
+        tAudio.currentTime = 0;
+      };
+    }
+    // Cuando la pregunta ya fue verificada (se respondió), para el timer
+    if (respuestaVerificada && timerAudio) {
+      timerAudio.pause();
+      timerAudio.currentTime = 0;
+      setTimerAudio(null);
+    }
+  }, [indicePregunta, juegoIniciado]);
+
+  // Detener timer si se responde antes de que termine el tiempo
+  useEffect(() => {
+    if (respuestaVerificada && timerAudio) {
+      timerAudio.pause();
+      timerAudio.currentTime = 0;
+      setTimerAudio(null);
+    }
+  }, [respuestaVerificada]);
+
+  // Si se acaba el tiempo, marcar respuesta como verificada (sin acierto)
+  useEffect(() => {
+    if (tiempoRestante === 0 && juegoIniciado && !respuestaVerificada) {
+      setRespuestaVerificada(true);
+      playSound("fallo");
+      setTimeout(() => {
+        if (indicePregunta + 1 < preguntas.length) {
+          setIndicePregunta(indicePregunta + 1);
+          setRespuestaSeleccionada(null);
+          setRespuestaVerificada(false);
+          setUsado5050(false);
+          setOpcionesVisibles([0, 1, 2, 3]);
+          setUsadoAmigo(false);
+          setMensajeAmigo(null);
+          setAmigoPensando(false);
+          setTiempoRestante(15);
+        } else {
+          setJuegoTerminado(true);
+        }
+      }, 1800);
+    }
+  }, [tiempoRestante, juegoIniciado, respuestaVerificada]);
 
   const playSound = (tipo) => {
     const audio = new window.Audio(
@@ -121,7 +198,6 @@ function App() {
     } else {
       playSound("fallo");
     }
-    // Avanzar a la siguiente pregunta tras 1.5 segundos
     setTimeout(() => {
       if (indicePregunta + 1 < preguntas.length) {
         setIndicePregunta(indicePregunta + 1);
@@ -132,6 +208,7 @@ function App() {
         setUsadoAmigo(false);
         setMensajeAmigo(null);
         setAmigoPensando(false);
+        setTiempoRestante(15);
       } else {
         setJuegoTerminado(true);
       }
@@ -179,7 +256,6 @@ function App() {
           <h1 className="text-4xl font-extrabold text-green-700 mb-4">¡Juego terminado!</h1>
           <p className="text-xl mb-2">Jugador: <span className="font-bold">{nombre}</span></p>
           <p className="text-2xl font-bold mb-4">Puntaje: <span className="text-green-700">{puntaje} / {preguntas.length}</span></p>
-
           {/* Ranking en tiempo real */}
           {ranking.length > 0 && (
             <div className="mt-6 w-full">
@@ -194,7 +270,6 @@ function App() {
               </div>
             </div>
           )}
-
           <button
             className="mt-8 px-8 py-3 bg-blue-600 text-white font-bold rounded-lg shadow hover:bg-blue-700 transition"
             onClick={() => {
@@ -209,6 +284,7 @@ function App() {
               setAmigoPensando(false);
               setPuntaje(0);
               setJuegoTerminado(false);
+              setTiempoRestante(15);
             }}
           >
             Jugar de nuevo
@@ -256,6 +332,14 @@ function App() {
       )}
 
       <div className="bg-white rounded-2xl shadow-2xl p-10 w-full max-w-xl flex flex-col items-center">
+
+        {/* Cronómetro y sonido timer */}
+        {juegoIniciado && !respuestaVerificada && (
+          <div className="text-3xl font-mono text-red-600 mb-4 select-none">
+            ⏰ Tiempo restante: {tiempoRestante} s
+          </div>
+        )}
+
         <h2 className="text-2xl font-bold text-yellow-700 mb-2">{`Pregunta ${indicePregunta + 1}`}</h2>
         <p className="mb-6 text-gray-800 text-center">{preguntaActual.enunciado}</p>
 
@@ -356,3 +440,4 @@ function App() {
 }
 
 export default App;
+

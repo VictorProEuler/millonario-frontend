@@ -1,5 +1,6 @@
-import { getDatabase, ref, set, onValue, push } from "firebase/database";
+import { getDatabase, ref, set, onValue, push, get } from "firebase/database";
 import app from "../firebase/firebaseConfig";
+import { recalcularRankingGlobal } from "./rankingService";
 
 // Registrar nombre de estudiante al entrar a la sala
 export function registrarEstudiante(codigoSala, nombre) {
@@ -46,8 +47,8 @@ export function escucharEstudiantes(codigoSala, callback) {
   });
 }
 
-// Guardar respuesta individual por pregunta
-export function guardarRespuesta(
+// Guardar respuesta individual por pregunta Y actualiza ranking global
+export async function guardarRespuesta(
   codigoSala,
   nombre,
   indicePregunta,
@@ -55,54 +56,37 @@ export function guardarRespuesta(
   puntaje
 ) {
   const db = getDatabase(app);
-  return set(
+  await set(
     ref(db, `salas/${codigoSala}/respuestas/${nombre}/${indicePregunta}`),
     {
       respuesta,
       puntaje,
     }
   );
+  // Actualiza ranking inmediatamente después de guardar la respuesta
+  await recalcularRankingGlobal(codigoSala);
 }
 
-// Asignar 0 puntos a quienes no respondieron la pregunta actual
-export function asignarCerosSiNoRespondieron(codigoSala, indicePregunta) {
+// Asignar 0 puntos a quienes no respondieron la pregunta actual Y actualiza ranking global
+export async function asignarCerosSiNoRespondieron(codigoSala, indicePregunta) {
   const db = getDatabase(app);
   const estudiantesRef = ref(db, `salas/${codigoSala}/estudiantes`);
-  return new Promise((resolve) => {
-    onValue(
-      estudiantesRef,
-      (snapshot) => {
-        const estudiantes = snapshot.val() ? Object.values(snapshot.val()) : [];
-        let pendientes = estudiantes.length;
-        if (pendientes === 0) resolve();
+  const estSnap = await get(estudiantesRef);
+  const estudiantes = estSnap.exists() ? Object.values(estSnap.val()) : [];
 
-        estudiantes.forEach((estudiante) => {
-          const nombre = estudiante.nombre;
-          const respuestaRef = ref(
-            db,
-            `salas/${codigoSala}/respuestas/${nombre}/${indicePregunta}`
-          );
-          onValue(
-            respuestaRef,
-            (snap) => {
-              if (!snap.exists()) {
-                set(respuestaRef, {
-                  respuesta: null,
-                  puntaje: 0,
-                }).then(() => {
-                  pendientes--;
-                  if (pendientes === 0) resolve();
-                });
-              } else {
-                pendientes--;
-                if (pendientes === 0) resolve();
-              }
-            },
-            { onlyOnce: true }
-          );
-        });
-      },
-      { onlyOnce: true }
+  // Asignar 0 a quienes no respondieron
+  for (let estudiante of estudiantes) {
+    const nombre = estudiante.nombre;
+    const respuestaRef = ref(
+      db,
+      `salas/${codigoSala}/respuestas/${nombre}/${indicePregunta}`
     );
-  });
+    const respuestaSnap = await get(respuestaRef);
+    if (!respuestaSnap.exists()) {
+      await set(respuestaRef, { respuesta: null, puntaje: 0 });
+    }
+  }
+
+  // Actualiza ranking después de asignar ceros
+  await recalcularRankingGlobal(codigoSala);
 }

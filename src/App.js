@@ -3,7 +3,7 @@ import preguntas from "./data/preguntas";
 import PantallaInicio from "./components/PantallaInicio";
 import FinDelJuego from "./components/FinDelJuego";
 import PantallaJuego from "./components/PantallaJuego";
-import { guardarPuntaje, escucharRanking } from "./services/rankingService";
+import { escucharRanking } from "./services/rankingService";
 import {
   inicializarSala,
   escucharEstadoSala,
@@ -55,7 +55,7 @@ function App() {
   };
 
   // ---- SELECCIÓN Y REGISTRO DE RESPUESTA ----
-  const handleSeleccion = (idx) => {
+  const handleSeleccion = async (idx) => {
     setRespuestaSeleccionada(idx);
     setRespuestaVerificada(true);
     const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
@@ -66,7 +66,7 @@ function App() {
         : 0;
 
     if (rol === "estudiante") {
-      guardarRespuesta(
+      await guardarRespuesta(
         normalizarSala(codigoSala),
         nombre,
         preguntaActualIdx,
@@ -260,13 +260,10 @@ function App() {
   useEffect(() => {
     if (juegoTerminado) {
       const sala = normalizarSala(codigoSala);
-      if (rol === "estudiante") {
-        guardarPuntaje(nombre, puntaje, sala);
-      }
       const unsubscribe = escucharRanking(setRanking, sala);
       return () => unsubscribe && unsubscribe();
     }
-  }, [juegoTerminado, nombre, puntaje, codigoSala, rol]);
+  }, [juegoTerminado, codigoSala]);
 
   // ---- Efecto para escuchar estado de sala ----
   useEffect(() => {

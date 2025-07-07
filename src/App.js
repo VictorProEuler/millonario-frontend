@@ -11,6 +11,7 @@ import {
 } from "./services/salaService";
 import ModalRanking from "./components/ModalRanking";
 import PantallaSeleccionRol from "./components/PantallaSeleccionRol";
+import { registrarEstudiante } from "./services/salaService";
 
 function App() {
   const [nombre, setNombre] = useState("");
@@ -233,8 +234,11 @@ function App() {
         esDocente={rol === "docente"}
         onIniciar={() => {
           if (nombre.trim() !== "" && codigoSala.trim() !== "") {
+            const sala = normalizarSala(codigoSala);
             if (rol === "docente") {
-              inicializarSala(normalizarSala(codigoSala), "profesor");
+              inicializarSala(sala, "profesor");
+            } else if (rol === "estudiante") {
+              registrarEstudiante(sala, nombre); // ← este es el nuevo
             }
             setJuegoIniciado(true);
           }

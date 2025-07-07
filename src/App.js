@@ -8,10 +8,14 @@ import {
   inicializarSala,
   escucharEstadoSala,
   actualizarEstadoSala,
+  registrarEstudiante,
+  escucharEstudiantes,
+  guardarRespuesta,
+  asignarCerosSiNoRespondieron,
 } from "./services/salaService";
 import ModalRanking from "./components/ModalRanking";
 import PantallaSeleccionRol from "./components/PantallaSeleccionRol";
-import { registrarEstudiante } from "./services/salaService";
+import PanelDocente from "./components/PanelDocente";
 
 function App() {
   const [nombre, setNombre] = useState("");
@@ -32,6 +36,7 @@ function App() {
   const [mostrarRankingParcial, setMostrarRankingParcial] = useState(false);
   const [rankingParcial, setRankingParcial] = useState([]);
   const [rol, setRol] = useState(null);
+  const [listaEstudiantes, setListaEstudiantes] = useState([]); // para panel docente
 
   const [segundos, setSegundos] = useState(15);
   const timerRef = useRef(null);
@@ -49,26 +54,60 @@ function App() {
     audio.play();
   };
 
-  const avanzarPregunta = () => {
+  // ---- SELECCIÓN Y REGISTRO DE RESPUESTA ----
+  const handleSeleccion = (idx) => {
+    setRespuestaSeleccionada(idx);
+    setRespuestaVerificada(true);
+    const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
+
+    const puntajeObtenido =
+      idx === preguntas[preguntaActualIdx].respuestaCorrecta
+        ? calcularPuntaje()
+        : 0;
+
+    if (rol === "estudiante") {
+      guardarRespuesta(
+        normalizarSala(codigoSala),
+        nombre,
+        preguntaActualIdx,
+        idx,
+        puntajeObtenido
+      );
+    }
+
+    if (idx === preguntas[preguntaActualIdx].respuestaCorrecta) {
+      playSound("acierto");
+      setMostrarAnimacion(true);
+      setPuntaje((p) => p + puntajeObtenido);
+      setTimeout(() => setMostrarAnimacion(false), 1200);
+    } else {
+      playSound("fallo");
+    }
+  };
+
+  // ---- AVANZAR PREGUNTA (docente) ----
+  const avanzarPregunta = async () => {
     if (!estadoSala) return;
-    if (estadoSala.preguntaActual + 1 < preguntas.length) {
+    const indicePregunta = estadoSala.preguntaActual;
+
+    // Asignar 0 a los que no respondieron la pregunta actual
+    await asignarCerosSiNoRespondieron(
+      normalizarSala(codigoSala),
+      indicePregunta
+    );
+
+    // Luego avanza la pregunta
+    if (indicePregunta + 1 < preguntas.length) {
       actualizarEstadoSala(normalizarSala(codigoSala), {
         ...estadoSala,
-        preguntaActual: estadoSala.preguntaActual + 1,
+        preguntaActual: indicePregunta + 1,
       });
-      // Solo guarda puntaje si es estudiante
-      if (rol === "estudiante") {
-        guardarPuntaje(nombre, puntaje, normalizarSala(codigoSala));
-      }
     } else {
       actualizarEstadoSala(normalizarSala(codigoSala), {
         ...estadoSala,
-        preguntaActual: estadoSala.preguntaActual + 1,
+        preguntaActual: indicePregunta + 1,
         fase: "finalizado",
       });
-      if (rol === "estudiante") {
-        guardarPuntaje(nombre, puntaje, normalizarSala(codigoSala));
-      }
       setJuegoTerminado(true);
     }
     setRespuestaSeleccionada(null);
@@ -123,20 +162,43 @@ function App() {
     return 200;
   };
 
-  const handleSeleccion = (idx) => {
-    setRespuestaSeleccionada(idx);
-    setRespuestaVerificada(true);
-    const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
-    if (idx === preguntas[preguntaActualIdx].respuestaCorrecta) {
-      playSound("acierto");
-      setMostrarAnimacion(true);
-      setPuntaje((p) => p + calcularPuntaje());
-      setTimeout(() => setMostrarAnimacion(false), 1200);
-    } else {
-      playSound("fallo");
+  // ---- useEffect para escuchar estudiantes en la sala (solo docente) ----
+  useEffect(() => {
+    if (rol === "docente" && juegoIniciado && codigoSala.trim() !== "") {
+      const sala = normalizarSala(codigoSala);
+      const unsubscribe = escucharEstudiantes(sala, (estudiantes) => {
+        setListaEstudiantes(estudiantes.map((e) => e.nombre));
+      });
+      return () => unsubscribe && unsubscribe();
     }
-  };
+  }, [rol, juegoIniciado, codigoSala]);
 
+  // --- Efecto para resetear estados de respuesta al cambiar de pregunta (arregla avance de preguntas) ---
+  useEffect(() => {
+    if (
+      juegoIniciado &&
+      !juegoTerminado &&
+      estadoSala?.fase === "jugando" &&
+      rol === "estudiante"
+    ) {
+      setRespuestaSeleccionada(null);
+      setRespuestaVerificada(false);
+      setUsado5050(false);
+      setOpcionesVisibles([0, 1, 2, 3]);
+      setUsadoAmigo(false);
+      setMensajeAmigo(null);
+      setAmigoPensando(false);
+      setSegundos(15);
+    }
+  }, [
+    estadoSala?.preguntaActual,
+    estadoSala?.fase,
+    juegoIniciado,
+    juegoTerminado,
+    rol,
+  ]);
+
+  // ---- Efecto para reproducir transición de pregunta ----
   useEffect(() => {
     if (
       juegoIniciado &&
@@ -152,6 +214,7 @@ function App() {
     }
   }, [estadoSala?.preguntaActual, juegoIniciado, juegoTerminado]);
 
+  // ---- Efecto para manejar cronómetro ----
   useEffect(() => {
     if (juegoIniciado && !juegoTerminado && !respuestaVerificada) {
       setSegundos(15);
@@ -170,7 +233,9 @@ function App() {
             clearInterval(timerRef.current);
             timerAudioRef.current.pause();
             timerAudioRef.current.currentTime = 0;
-            setRespuestaVerificada(true);
+            if (respuestaSeleccionada !== null) {
+              setRespuestaVerificada(true);
+            }
             return 0;
           }
         });
@@ -188,12 +253,13 @@ function App() {
     juegoIniciado,
     juegoTerminado,
     respuestaVerificada,
+    respuestaSeleccionada,
   ]);
 
+  // ---- Efecto para ranking al terminar ----
   useEffect(() => {
     if (juegoTerminado) {
       const sala = normalizarSala(codigoSala);
-      // Solo guarda si es estudiante
       if (rol === "estudiante") {
         guardarPuntaje(nombre, puntaje, sala);
       }
@@ -202,6 +268,7 @@ function App() {
     }
   }, [juegoTerminado, nombre, puntaje, codigoSala, rol]);
 
+  // ---- Efecto para escuchar estado de sala ----
   useEffect(() => {
     if (codigoSala.trim() !== "") {
       const sala = normalizarSala(codigoSala);
@@ -210,15 +277,20 @@ function App() {
     }
   }, [codigoSala]);
 
+  // ---- Efecto para ranking parcial en tiempo real (también para el docente) ----
   useEffect(() => {
-    if (juegoIniciado && !juegoTerminado && codigoSala.trim() !== "") {
+    if (
+      juegoIniciado &&
+      estadoSala?.fase === "jugando" &&
+      codigoSala.trim() !== ""
+    ) {
       const sala = normalizarSala(codigoSala);
       const unsubscribe = escucharRanking(setRankingParcial, sala);
       return () => unsubscribe && unsubscribe();
     }
-  }, [juegoIniciado, juegoTerminado, codigoSala]);
+  }, [juegoIniciado, estadoSala?.fase, codigoSala]);
 
-  // ---- Renderizado Condicional ----
+  // --- CONTROL DE FASES Y PANTALLAS ---
 
   if (!rol) {
     return <PantallaSeleccionRol onSeleccion={setRol} />;
@@ -238,7 +310,7 @@ function App() {
             if (rol === "docente") {
               inicializarSala(sala, "profesor");
             } else if (rol === "estudiante") {
-              registrarEstudiante(sala, nombre); // ← este es el nuevo
+              registrarEstudiante(sala, nombre);
             }
             setJuegoIniciado(true);
           }
@@ -251,19 +323,46 @@ function App() {
     return <div>Cargando sala...</div>;
   }
 
+  // --- Si la sala está esperando y eres docente, muestra PanelDocente ---
+  if (rol === "docente" && estadoSala.fase === "esperando") {
+    return (
+      <PanelDocente
+        codigoSala={codigoSala}
+        estudiantes={listaEstudiantes}
+        onIniciarPartida={() => {
+          actualizarEstadoSala(normalizarSala(codigoSala), {
+            ...estadoSala,
+            fase: "jugando",
+            preguntaActual: 0,
+          });
+        }}
+      />
+    );
+  }
+
+  // --- Si la sala está esperando y eres estudiante, muestra mensaje de espera ---
+  if (rol === "estudiante" && estadoSala.fase === "esperando") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center">
+        <h2 className="text-2xl font-bold mb-4">
+          Esperando a que el docente inicie la partida...
+        </h2>
+        <p className="text-gray-500">No cierres esta ventana.</p>
+      </div>
+    );
+  }
+
   if (estadoSala.fase === "finalizado" || juegoTerminado) {
-    // Filtrar ranking: NUNCA mostrar el nombre del docente
     const nombreDocente = rol === "docente" ? nombre.trim().toLowerCase() : "";
     const rankingFiltrado = ranking.filter(
       (item) => item.nombre.trim().toLowerCase() !== nombreDocente
     );
-
     return (
       <FinDelJuego
         nombre={nombre}
         puntaje={puntaje}
         ranking={rankingFiltrado}
-        esDocente={rol === "docente"} // <--- AGREGA ESTA LÍNEA
+        esDocente={rol === "docente"}
         onReiniciar={() => {
           setJuegoIniciado(false);
           setRespuestaSeleccionada(null);
@@ -281,19 +380,16 @@ function App() {
     );
   }
 
-  // Pregunta actual
   const preguntaActualIdx = estadoSala.preguntaActual ?? 0;
   const preguntaActual = preguntas[preguntaActualIdx];
   if (!preguntaActual) {
     return <div>Cargando pregunta...</div>;
   }
 
-  // Ranking visible (parcial): NUNCA incluir al docente
   const nombreDocente = rol === "docente" ? nombre.trim().toLowerCase() : "";
   let rankingVisible = [...rankingParcial].filter(
     (item) => item.nombre.trim().toLowerCase() !== nombreDocente
   );
-  // Si eres estudiante, agrega tu propio puntaje actualizado si es necesario
   if (rol === "estudiante") {
     const nombreNormalizado = nombre.trim().toLowerCase();
     const idx = rankingVisible.findIndex(

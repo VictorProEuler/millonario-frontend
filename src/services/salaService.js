@@ -1,9 +1,7 @@
-// En src/services/salaService.js
-
 import { getDatabase, ref, set, onValue, push } from "firebase/database";
 import app from "../firebase/firebaseConfig";
 
-// Nuevo: Registrar nombre de estudiante al entrar a la sala
+// Registrar nombre de estudiante al entrar a la sala
 export function registrarEstudiante(codigoSala, nombre) {
   const db = getDatabase(app);
   const listaRef = ref(db, `salas/${codigoSala}/estudiantes`);
@@ -14,13 +12,13 @@ export function registrarEstudiante(codigoSala, nombre) {
   return push(listaRef, nuevoEstudiante);
 }
 
-// Ya existentes
+// Inicializar sala (usa "fase", no "estado")
 export function inicializarSala(codigoSala, modo = "profesor") {
   const db = getDatabase(app);
   return set(ref(db, `salas/${codigoSala}/estado`), {
     modo,
     preguntaActual: 0,
-    estado: "esperando", // ← importante: no "jugando" todavía
+    fase: "esperando", // <-- aquí
   });
 }
 
@@ -37,7 +35,7 @@ export function actualizarEstadoSala(codigoSala, nuevosValores) {
   return set(ref(db, `salas/${codigoSala}/estado`), nuevosValores);
 }
 
-// Nuevo: Escuchar lista de estudiantes conectados
+// Escuchar lista de estudiantes conectados
 export function escucharEstudiantes(codigoSala, callback) {
   const db = getDatabase(app);
   const listaRef = ref(db, `salas/${codigoSala}/estudiantes`);
@@ -45,5 +43,66 @@ export function escucharEstudiantes(codigoSala, callback) {
     const data = snapshot.val() || {};
     const estudiantes = Object.values(data);
     callback(estudiantes);
+  });
+}
+
+// Guardar respuesta individual por pregunta
+export function guardarRespuesta(
+  codigoSala,
+  nombre,
+  indicePregunta,
+  respuesta,
+  puntaje
+) {
+  const db = getDatabase(app);
+  return set(
+    ref(db, `salas/${codigoSala}/respuestas/${nombre}/${indicePregunta}`),
+    {
+      respuesta,
+      puntaje,
+    }
+  );
+}
+
+// Asignar 0 puntos a quienes no respondieron la pregunta actual
+export function asignarCerosSiNoRespondieron(codigoSala, indicePregunta) {
+  const db = getDatabase(app);
+  const estudiantesRef = ref(db, `salas/${codigoSala}/estudiantes`);
+  return new Promise((resolve) => {
+    onValue(
+      estudiantesRef,
+      (snapshot) => {
+        const estudiantes = snapshot.val() ? Object.values(snapshot.val()) : [];
+        let pendientes = estudiantes.length;
+        if (pendientes === 0) resolve();
+
+        estudiantes.forEach((estudiante) => {
+          const nombre = estudiante.nombre;
+          const respuestaRef = ref(
+            db,
+            `salas/${codigoSala}/respuestas/${nombre}/${indicePregunta}`
+          );
+          onValue(
+            respuestaRef,
+            (snap) => {
+              if (!snap.exists()) {
+                set(respuestaRef, {
+                  respuesta: null,
+                  puntaje: 0,
+                }).then(() => {
+                  pendientes--;
+                  if (pendientes === 0) resolve();
+                });
+              } else {
+                pendientes--;
+                if (pendientes === 0) resolve();
+              }
+            },
+            { onlyOnce: true }
+          );
+        });
+      },
+      { onlyOnce: true }
+    );
   });
 }

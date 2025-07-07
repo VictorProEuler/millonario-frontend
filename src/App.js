@@ -10,6 +10,7 @@ import {
   actualizarEstadoSala,
 } from "./services/salaService";
 import ModalRanking from "./components/ModalRanking";
+import PantallaSeleccionRol from "./components/PantallaSeleccionRol";
 
 function App() {
   const [nombre, setNombre] = useState("");
@@ -26,22 +27,20 @@ function App() {
   const [juegoTerminado, setJuegoTerminado] = useState(false);
   const [codigoSala, setCodigoSala] = useState("");
   const [ranking, setRanking] = useState([]);
-  const [estadoSala, setEstadoSala] = useState(null); // <--- Estado sincronizado de sala
+  const [estadoSala, setEstadoSala] = useState(null);
   const [mostrarRankingParcial, setMostrarRankingParcial] = useState(false);
   const [rankingParcial, setRankingParcial] = useState([]);
+  const [rol, setRol] = useState(null);
 
-  // Timer y sonidos
   const [segundos, setSegundos] = useState(15);
   const timerRef = useRef(null);
   const timerAudioRef = useRef(null);
   const transicionAudioRef = useRef(null);
 
-  // Normalización de sala
   function normalizarSala(codigo) {
     return codigo.trim().toUpperCase();
   }
 
-  // Sonidos de acierto/fallo
   const playSound = (tipo) => {
     const audio = new window.Audio(
       tipo === "acierto" ? "/sonidos/acierto.mp3" : "/sonidos/fallo.mp3"
@@ -49,7 +48,94 @@ function App() {
     audio.play();
   };
 
-  // Sonido de transición al iniciar cada pregunta
+  const avanzarPregunta = () => {
+    if (!estadoSala) return;
+    if (estadoSala.preguntaActual + 1 < preguntas.length) {
+      actualizarEstadoSala(normalizarSala(codigoSala), {
+        ...estadoSala,
+        preguntaActual: estadoSala.preguntaActual + 1,
+      });
+      // Solo guarda puntaje si es estudiante
+      if (rol === "estudiante") {
+        guardarPuntaje(nombre, puntaje, normalizarSala(codigoSala));
+      }
+    } else {
+      actualizarEstadoSala(normalizarSala(codigoSala), {
+        ...estadoSala,
+        preguntaActual: estadoSala.preguntaActual + 1,
+        fase: "finalizado",
+      });
+      if (rol === "estudiante") {
+        guardarPuntaje(nombre, puntaje, normalizarSala(codigoSala));
+      }
+      setJuegoTerminado(true);
+    }
+    setRespuestaSeleccionada(null);
+    setRespuestaVerificada(false);
+    setUsado5050(false);
+    setOpcionesVisibles([0, 1, 2, 3]);
+    setUsadoAmigo(false);
+    setMensajeAmigo(null);
+    setAmigoPensando(false);
+  };
+
+  const usar5050 = () => {
+    if (usado5050) return;
+    setUsado5050(true);
+    const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
+    const incorrectas = preguntas[preguntaActualIdx].opciones
+      .map((_, idx) => idx)
+      .filter((idx) => idx !== preguntas[preguntaActualIdx].respuestaCorrecta);
+    const idxAleatorio =
+      incorrectas[Math.floor(Math.random() * incorrectas.length)];
+    setOpcionesVisibles(
+      [preguntas[preguntaActualIdx].respuestaCorrecta, idxAleatorio].sort()
+    );
+  };
+
+  const usarAmigo = () => {
+    if (usadoAmigo) return;
+    setUsadoAmigo(true);
+    setAmigoPensando(true);
+    setMensajeAmigo(null);
+    const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
+    setTimeout(() => {
+      setAmigoPensando(false);
+      const acierta = Math.random() < 0.7;
+      const idxSugerido = acierta
+        ? preguntas[preguntaActualIdx].respuestaCorrecta
+        : [0, 1, 2, 3].filter(
+            (idx) => idx !== preguntas[preguntaActualIdx].respuestaCorrecta
+          )[Math.floor(Math.random() * 3)];
+      setMensajeAmigo(
+        `🤔 Tu amigo piensa que la respuesta es: "${preguntas[preguntaActualIdx].opciones[idxSugerido]}".`
+      );
+    }, 1500);
+  };
+
+  const calcularPuntaje = () => {
+    if (segundos > 12) return 1000;
+    if (segundos > 9) return 900;
+    if (segundos > 6) return 800;
+    if (segundos > 3) return 600;
+    if (segundos > 0) return 400;
+    return 200;
+  };
+
+  const handleSeleccion = (idx) => {
+    setRespuestaSeleccionada(idx);
+    setRespuestaVerificada(true);
+    const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
+    if (idx === preguntas[preguntaActualIdx].respuestaCorrecta) {
+      playSound("acierto");
+      setMostrarAnimacion(true);
+      setPuntaje((p) => p + calcularPuntaje());
+      setTimeout(() => setMostrarAnimacion(false), 1200);
+    } else {
+      playSound("fallo");
+    }
+  };
+
   useEffect(() => {
     if (
       juegoIniciado &&
@@ -65,7 +151,6 @@ function App() {
     }
   }, [estadoSala?.preguntaActual, juegoIniciado, juegoTerminado]);
 
-  // Timer visible y sonido
   useEffect(() => {
     if (juegoIniciado && !juegoTerminado && !respuestaVerificada) {
       setSegundos(15);
@@ -104,17 +189,18 @@ function App() {
     respuestaVerificada,
   ]);
 
-  // Ranking en tiempo real (al finalizar)
   useEffect(() => {
     if (juegoTerminado) {
       const sala = normalizarSala(codigoSala);
-      guardarPuntaje(nombre, puntaje, sala);
+      // Solo guarda si es estudiante
+      if (rol === "estudiante") {
+        guardarPuntaje(nombre, puntaje, sala);
+      }
       const unsubscribe = escucharRanking(setRanking, sala);
       return () => unsubscribe && unsubscribe();
     }
-  }, [juegoTerminado, nombre, puntaje, codigoSala]);
+  }, [juegoTerminado, nombre, puntaje, codigoSala, rol]);
 
-  // Escucha el estado de sala en tiempo real (preguntaActual)
   useEffect(() => {
     if (codigoSala.trim() !== "") {
       const sala = normalizarSala(codigoSala);
@@ -123,7 +209,6 @@ function App() {
     }
   }, [codigoSala]);
 
-  // Efecto para escuchar el ranking parcial
   useEffect(() => {
     if (juegoIniciado && !juegoTerminado && codigoSala.trim() !== "") {
       const sala = normalizarSala(codigoSala);
@@ -132,97 +217,12 @@ function App() {
     }
   }, [juegoIniciado, juegoTerminado, codigoSala]);
 
-  // Avanzar a la siguiente pregunta (solo el profe)
-  const avanzarPregunta = () => {
-    if (!estadoSala) return;
-    if (estadoSala.preguntaActual + 1 < preguntas.length) {
-      actualizarEstadoSala(normalizarSala(codigoSala), {
-        ...estadoSala,
-        preguntaActual: estadoSala.preguntaActual + 1,
-      });
-      guardarPuntaje(nombre, puntaje, normalizarSala(codigoSala)); // <-- AGREGA ESTA LÍNEA AQUÍ
-    } else {
-      // Fin del juego
-      actualizarEstadoSala(normalizarSala(codigoSala), {
-        ...estadoSala,
-        preguntaActual: estadoSala.preguntaActual + 1,
-        fase: "finalizado",
-      });
-      guardarPuntaje(nombre, puntaje, normalizarSala(codigoSala)); //<-- Y AQUÍ TAMBIÉN
-      setJuegoTerminado(true);
-    }
-    setRespuestaSeleccionada(null);
-    setRespuestaVerificada(false);
-    setUsado5050(false);
-    setOpcionesVisibles([0, 1, 2, 3]);
-    setUsadoAmigo(false);
-    setMensajeAmigo(null);
-    setAmigoPensando(false);
-  };
+  // ---- Renderizado Condicional ----
 
-  // Lógica 50/50
-  const usar5050 = () => {
-    if (usado5050) return;
-    setUsado5050(true);
-    const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
-    const incorrectas = preguntas[preguntaActualIdx].opciones
-      .map((_, idx) => idx)
-      .filter((idx) => idx !== preguntas[preguntaActualIdx].respuestaCorrecta);
-    const idxAleatorio =
-      incorrectas[Math.floor(Math.random() * incorrectas.length)];
-    setOpcionesVisibles(
-      [preguntas[preguntaActualIdx].respuestaCorrecta, idxAleatorio].sort()
-    );
-  };
+  if (!rol) {
+    return <PantallaSeleccionRol onSeleccion={setRol} />;
+  }
 
-  // Lógica comodín "preguntar a un amigo"
-  const usarAmigo = () => {
-    if (usadoAmigo) return;
-    setUsadoAmigo(true);
-    setAmigoPensando(true);
-    setMensajeAmigo(null);
-    const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
-    setTimeout(() => {
-      setAmigoPensando(false);
-      const acierta = Math.random() < 0.7;
-      const idxSugerido = acierta
-        ? preguntas[preguntaActualIdx].respuestaCorrecta
-        : [0, 1, 2, 3].filter(
-            (idx) => idx !== preguntas[preguntaActualIdx].respuestaCorrecta
-          )[Math.floor(Math.random() * 3)];
-      setMensajeAmigo(
-        `🤔 Tu amigo piensa que la respuesta es: "${preguntas[preguntaActualIdx].opciones[idxSugerido]}".`
-      );
-    }, 1500);
-  };
-
-  // Puntuación proporcional al tiempo
-  const calcularPuntaje = () => {
-    if (segundos > 12) return 1000;
-    if (segundos > 9) return 900;
-    if (segundos > 6) return 800;
-    if (segundos > 3) return 600;
-    if (segundos > 0) return 400;
-    return 200;
-  };
-
-  // Al seleccionar respuesta
-  const handleSeleccion = (idx) => {
-    setRespuestaSeleccionada(idx);
-    setRespuestaVerificada(true);
-    const preguntaActualIdx = estadoSala?.preguntaActual ?? 0;
-    if (idx === preguntas[preguntaActualIdx].respuestaCorrecta) {
-      playSound("acierto");
-      setMostrarAnimacion(true);
-      setPuntaje((p) => p + calcularPuntaje());
-      setTimeout(() => setMostrarAnimacion(false), 1200);
-    } else {
-      playSound("fallo");
-    }
-    // Aquí ya no avanzas localmente la pregunta. El profe debe pulsar "Siguiente".
-  };
-
-  // Antes de iniciar
   if (!juegoIniciado) {
     return (
       <PantallaInicio
@@ -230,9 +230,12 @@ function App() {
         setNombre={setNombre}
         codigoSala={codigoSala}
         setCodigoSala={setCodigoSala}
+        esDocente={rol === "docente"}
         onIniciar={() => {
           if (nombre.trim() !== "" && codigoSala.trim() !== "") {
-            inicializarSala(normalizarSala(codigoSala), "profesor");
+            if (rol === "docente") {
+              inicializarSala(normalizarSala(codigoSala), "profesor");
+            }
             setJuegoIniciado(true);
           }
         }}
@@ -240,18 +243,22 @@ function App() {
     );
   }
 
-  // Si no hay estado de sala aún, loader
   if (!estadoSala) {
     return <div>Cargando sala...</div>;
   }
 
-  // Fin del juego
   if (estadoSala.fase === "finalizado" || juegoTerminado) {
+    // Filtrar ranking: NUNCA mostrar el nombre del docente
+    const nombreDocente = rol === "docente" ? nombre.trim().toLowerCase() : "";
+    const rankingFiltrado = ranking.filter(
+      (item) => item.nombre.trim().toLowerCase() !== nombreDocente
+    );
+
     return (
       <FinDelJuego
         nombre={nombre}
         puntaje={puntaje}
-        ranking={ranking}
+        ranking={rankingFiltrado}
         onReiniciar={() => {
           setJuegoIniciado(false);
           setRespuestaSeleccionada(null);
@@ -269,29 +276,30 @@ function App() {
     );
   }
 
-  // ---- Esto va JUSTO aquí, dentro del cuerpo de la función y antes del return ----
+  // Pregunta actual
   const preguntaActualIdx = estadoSala.preguntaActual ?? 0;
   const preguntaActual = preguntas[preguntaActualIdx];
   if (!preguntaActual) {
     return <div>Cargando pregunta...</div>;
   }
-  // -------------------------------------------------------------------------------
 
-  // Normaliza nombre actual
-  const nombreNormalizado = nombre.trim().toLowerCase();
-
-  // Copia del ranking parcial y actualiza o inserta el puntaje actual
-  let rankingVisible = [...rankingParcial];
-  const idx = rankingVisible.findIndex(
-    (item) => item.nombre.trim().toLowerCase() === nombreNormalizado
+  // Ranking visible (parcial): NUNCA incluir al docente
+  const nombreDocente = rol === "docente" ? nombre.trim().toLowerCase() : "";
+  let rankingVisible = [...rankingParcial].filter(
+    (item) => item.nombre.trim().toLowerCase() !== nombreDocente
   );
-
-  if (idx >= 0) {
-    rankingVisible[idx].puntaje = puntaje;
-  } else {
-    rankingVisible.push({ nombre, puntaje });
+  // Si eres estudiante, agrega tu propio puntaje actualizado si es necesario
+  if (rol === "estudiante") {
+    const nombreNormalizado = nombre.trim().toLowerCase();
+    const idx = rankingVisible.findIndex(
+      (item) => item.nombre.trim().toLowerCase() === nombreNormalizado
+    );
+    if (idx >= 0) {
+      rankingVisible[idx].puntaje = puntaje;
+    } else {
+      rankingVisible.push({ nombre, puntaje });
+    }
   }
-
   rankingVisible.sort((a, b) => b.puntaje - a.puntaje);
 
   return (
@@ -312,42 +320,45 @@ function App() {
         usarAmigo={usarAmigo}
         mensajeAmigo={mensajeAmigo}
         handleSeleccion={handleSeleccion}
+        esDocente={rol === "docente"}
       />
 
-      <div style={{ textAlign: "center", marginTop: 16 }}>
-        <button
-          onClick={avanzarPregunta}
-          style={{
-            padding: "12px 28px",
-            fontSize: "18px",
-            background: "#2563eb",
-            color: "#fff",
-            borderRadius: "10px",
-            fontWeight: "bold",
-            border: "none",
-            cursor: "pointer",
-            boxShadow: "0 2px 12px #c7d2fe",
-          }}
-        >
-          Siguiente pregunta
-        </button>
-        <button
-          onClick={() => setMostrarRankingParcial(true)}
-          style={{
-            padding: "10px 20px",
-            fontSize: "16px",
-            background: "#0ea5e9",
-            color: "#fff",
-            borderRadius: "8px",
-            fontWeight: "bold",
-            border: "none",
-            cursor: "pointer",
-            marginLeft: "20px",
-          }}
-        >
-          Ver ranking parcial
-        </button>
-      </div>
+      {rol === "docente" && (
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <button
+            onClick={avanzarPregunta}
+            style={{
+              padding: "12px 28px",
+              fontSize: "18px",
+              background: "#2563eb",
+              color: "#fff",
+              borderRadius: "10px",
+              fontWeight: "bold",
+              border: "none",
+              cursor: "pointer",
+              boxShadow: "0 2px 12px #c7d2fe",
+            }}
+          >
+            Siguiente pregunta
+          </button>
+          <button
+            onClick={() => setMostrarRankingParcial(true)}
+            style={{
+              padding: "10px 20px",
+              fontSize: "16px",
+              background: "#0ea5e9",
+              color: "#fff",
+              borderRadius: "8px",
+              fontWeight: "bold",
+              border: "none",
+              cursor: "pointer",
+              marginLeft: "20px",
+            }}
+          >
+            Ver ranking parcial
+          </button>
+        </div>
+      )}
 
       <ModalRanking
         visible={mostrarRankingParcial}

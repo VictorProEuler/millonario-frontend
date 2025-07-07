@@ -259,6 +259,7 @@ function App() {
         nombre={nombre}
         puntaje={puntaje}
         ranking={rankingFiltrado}
+        esDocente={rol === "docente"} // <--- AGREGA ESTA LÍNEA
         onReiniciar={() => {
           setJuegoIniciado(false);
           setRespuestaSeleccionada(null);
